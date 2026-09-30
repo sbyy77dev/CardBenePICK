@@ -1,0 +1,437 @@
+import os
+from fastapi import FastAPI, HTTPException, Response, status
+from fastapi_mcp import FastApiMCP
+from typing import Dict, Any
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain_core.rate_limiters import InMemoryRateLimiter
+import json
+import pandas as pd
+from tool_extra.recommend_llm import invoke_question
+import time
+from datetime import datetime, timezone, timedelta
+from db_tools.repo import get_mcc_code_by_merchant, get_benefits_by_user_assets_and_mcc,get_user_benefit_limit_in_benefit_sum
+import requests
+
+load_dotenv()
+app = FastAPI(title="Card Benefit Recommendation MCP Server")
+
+# OpenWeather API 설정
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+OPENWEATHER_BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
+HF_API_KEY = os.getenv("HF_API_KEY")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+if LANGSMITH_API_KEY and LANGSMITH_API_KEY.strip():
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "LLM Agent with LangGraph")
+else:
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+
+LLM_MODEL = "openai/gpt-oss-120b" # gpt-4o-mini, openai/gpt-oss-120b
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+os.environ['TAVILY_API_KEY'] = os.getenv("TAVILY_API_KEY")
+ 
+rate_limiter = InMemoryRateLimiter(requests_per_second=10)
+# llm = ChatOpenAI(
+#     model="gpt-4o-mini", 
+#     openai_api_key=OPENAI_API_KEY,
+#     rate_limiter=rate_limiter
+# )
+chat = ChatOpenAI( # get_sale에서 사용할 llm
+    # model="Qwen/Qwen3-8B",
+    model="openai/gpt-oss-120b",  # Hugging Face Router의 모델
+    openai_api_key=HF_API_KEY,
+    openai_api_base="https://router.huggingface.co/v1",  # base_url 대신 사용
+    temperature=0
+)
+
+with open('prompt/prompt.json', 'r', encoding='utf-8') as f:
+    prompt_data = json.load(f)
+
+    print("prompt_json을 불러왔습니다." + prompt_data["get_sale"][:20])
+
+def merge_context(items):
+    """
+    JSON 리스트의 각 항목을 merge_context 방식으로 텍스트로 변환
+    """
+    parts = []
+    for item in items:
+        for key, value in item.items():
+            if isinstance(value, list):
+                # 리스트일 경우 각 항목을 줄바꿈으로 합침
+                if value:
+                    parts.append('\n'.join(value))
+            elif value:  # 문자열 등 일반 값
+                parts.append(str(value))
+    return '\n'.join(parts)
+
+def recursive_to_text(data, indent_level=0):
+    """
+    재귀적으로 JSON 데이터를 순회하며 자연어 텍스트로 변환하는 함수
+    """
+    text_result = ""
+    indent = "  " * indent_level  # 들여쓰기
+
+    if isinstance(data, dict):
+        for key, value in data.items():
+            # 'table' 키가 있는 경우 표 데이터를 텍스트로 변환
+            if key == "table" and isinstance(value, list):
+                text_result += f"{indent}[표 데이터]\n"
+                for row in value:
+                    # 각 행의 데이터를 ' | '로 구분하여 출력
+                    text_result += f"{indent}  - {' | '.join(map(str, row))}\n"
+            
+            # 'subtitle' 같은 제목 키는 강조해서 출력
+            elif key in ["subtitle", "title"]:
+                text_result += f"\n{indent}■ {value}\n"
+            
+            # 그 외 일반적인 키-값 쌍
+            else:
+                # descriptions 등은 키를 출력하지 않고 값만 재귀 처리할 수도 있음
+                if key not in ["descriptions", "items"]: 
+                     text_result += f"{indent}- {key}: "
+                
+                # 값 처리 (재귀 호출 전에 줄바꿈 처리 등)
+                sub_text = recursive_to_text(value, indent_level + 1)
+                text_result += sub_text
+
+    elif isinstance(data, list):
+        for item in data:
+            # 리스트 내부 아이템이 문자열이면 바로 출력, 아니면 재귀
+            if isinstance(item, str):
+                text_result += f"{indent}- {item}\n"
+            else:
+                text_result += recursive_to_text(item, indent_level)
+    
+    elif data is not None:
+        # 문자열, 숫자 등 기본 타입
+        text_result += f"{str(data)}\n"
+
+    return text_result
+
+def format_benefits_to_markdown(benefits_df: pd.DataFrame) -> str:
+    """
+    혜택 DataFrame의 모든 정보를 그대로 유지하며 benefit별로만 구분선을 추가
+    """
+    if benefits_df.empty:
+        return "사용 가능한 혜택이 없습니다."
+    
+    result = ""
+    
+    # 각 benefit별로 모든 컬럼 정보를 그대로 출력
+    for idx, row in benefits_df.iterrows():
+        result += f"BENEFIT #{idx + 1}\n"
+        result += "=" * 50 + "\n"
+        
+        # 혜택 적용 내역 컬럼들을 한글로 설명
+        benefit_usage_cols = {
+            'day_amount': '일간 혜택 적용 금액',
+            'day_count': '일간 혜택 적용 횟수', 
+            'week_amount': '주간 혜택 적용 금액',
+            'week_count': '주간 혜택 적용 횟수',
+            'month_amount': '월간 혜택 적용 금액',
+            'month_count': '월간 혜택 적용 횟수',
+            'year_amount': '연간 혜택 적용 금액',
+            'year_count': '연간 혜택 적용 횟수',
+            'prev_month_total': '전월 카드 사용 실적'
+        }
+        
+        # 혜택 적용 내역이 아닌 컬럼들 먼저 출력
+        for col_name in benefits_df.columns:
+            if col_name not in benefit_usage_cols:
+                value = row[col_name]
+                
+                # json_rawdata와 json_notice 컬럼은 특별히 처리
+                if col_name in ['json_rawdata', 'summarized_notice'] and value:
+                    result += f"{col_name}:\n"
+                    try:
+                        # JSON 문자열을 파싱
+                        json_data = json.loads(value) if isinstance(value, str) else value
+                        
+                        # 2. 재귀 함수를 통해 모든 구조를 텍스트로 변환
+                        merged_text = recursive_to_text(json_data)
+                        
+                        result += f"{merged_text}\n"
+                    except (json.JSONDecodeError, TypeError):
+                        # JSON 파싱 실패시 원본 그대로 출력
+                        result += f"  {value}\n"
+                else:
+                    result += f"{col_name}: {value}\n"
+        
+        # 혜택 적용 내역 섹션
+        result += "\n사용자가 기간별 적용받은 혜택 내역 및 카드 사용 실적:\n"
+        result += "-" * 50 + "\n"
+        for col_name, korean_name in benefit_usage_cols.items():
+            if col_name in benefits_df.columns:
+                value = row[col_name]
+                # 금액 관련 컬럼은 천단위 구분자 추가
+                if 'amount' in col_name or 'total' in col_name:
+                    result += f"{korean_name}: {value:,}원\n"
+                else:
+                    result += f"{korean_name}: {value}\n"
+        
+        result += "\n" + "-" * 80 + "\n\n"
+    
+    return result
+
+@app.get("/sale", operation_id ="get_sale_value")
+def get_sale(user_id :int, merchant: str, mcc_code : int, amount: int = None) -> Dict[str, Any]:
+    """
+    가맹점 이름과 결제금액, 사용자 보유 카드 혜택을 이용하여 가장 결제 금액이 저렴한 카드와 결제 정보를 반환합니다.
+
+    이 함수를 실행하기 전 필수 정보 수집 과정:
+    2. merchant의 MCC 코드가 필요하면 get_mcc_code() 도구를 사용하세요
+    3. 모든 정보가 수집되면 이 함수를 호출하여 최종 카드를 추천받으세요
+    """
+    start_time = time.perf_counter()
+    print(f"get_sale func start time {datetime.now(timezone(timedelta(hours=9)))}" )
+
+    # 현재 시각을 결제 시각으로 사용 (한국시간 UTC+9)
+    kst = timezone(timedelta(hours=9))
+    current_time = datetime.now(kst)
+    payment_time = current_time.strftime("%Y년 %m월 %d일 %H시 %M분 %S초")
+    weekday = ["월", "화", "수", "목", "금", "토", "일"][current_time.weekday()]
+
+
+
+    question = f"{payment_time}, {weekday}요일 {merchant}에서 {amount}원 사용 예정. \n 내 사용 내역과 혜택 적용 가능한 시간, 요일인지, 한도를 고려해서 가장 결제 금액이 저렴한 카드 계산해줘. \n 한번에 하나 카드만 사용 가능하니까 모든 혜택 정보를 합산하지 말고 가장 좋은 카드 하나만 추천해줘. \n"
+
+    # DB 연결해서 데이터 가져오기 및 context 정리
+    try:
+        # MCC 코드 조회
+        mcc_code = get_mcc_code_by_merchant(merchant)
+        
+        # 혜택 리스트 조회 (benefit_sum과 조인된 데이터)
+        benefits_df = get_benefits_by_user_assets_and_mcc(user_id, mcc_code)
+        
+        print(f"🔍 조회된 혜택 데이터:\n{benefits_df}")
+        # 마크다운 형식으로 변환
+        benefits_markdown = format_benefits_to_markdown(benefits_df)
+        print(f"혜택 마크다운:\n{benefits_markdown}")
+
+        
+        # context 구성 (마크다운 형식)
+        context = f"""
+# 🛒 카드 추천 요청 정보
+
+**사용자 ID:** {user_id}
+**가맹점:** {merchant}
+**MCC 코드:** {mcc_code}
+**결제 예정 금액:** {amount:,}원 (예상)
+**결제 시각:** {payment_time} ({weekday}요일)
+
+{benefits_markdown}
+
+# 📈 분석 요청
+Benefit별 json_rawdata 정보를 복합적으로 이해하여 혜택이 적용된 최종 결제 금액을 계산하고, 가장 혜택이 높은 카드를 추천해주세요.
+오후 9시 ~ 오전 9시까지 Night 할인서비스 10% 할인이라고 써있는 경우 Night에만 적용 가능한 혜택입니다. 그 아래에 일반 혜택은 없는 것입니다.
+혜택을 복합적으로 잘 이해하여 계산하세요.
+        """
+        
+        print(f"📊 완전한 마크다운 context:")
+        print("="*80)
+        print(context)
+        print("="*80)
+        
+    except Exception as e:
+        print(f"❌ DB 데이터 조회 실패: {e}")
+        context = f"""
+# ⚠️ 데이터 조회 실패
+
+**사용자 ID:** {user_id}
+**가맹점:** {merchant}
+**금액:** {amount:,}원
+
+오류: {str(e)} 
+        """
+    
+    # 카드 혜택 비교하고 카드 추천하기
+    answer = invoke_question(llm=chat, prompt=prompt_data["get_sale"], context=context, question=question)
+    
+    
+    # answer에는 딕셔너리 모양의 str type이 반환됨.
+    data_dict = json.loads(answer)
+    data_dict["user_id"] = user_id
+    print("llm 대답", data_dict)
+
+    end_time = time.perf_counter()
+    elapsed_time = end_time - start_time
+    print(f"get_sale 함수 실행 시간: {elapsed_time:.4f}초")
+
+    try:
+        return data_dict
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"오류 발생: {str(e)}")
+
+# @app.get("/get_user_id", operation_id ="get_user_id")
+# def get_user_id() -> int:
+#     """
+#         사용자의 user_id를 알아냅니다.
+#     """
+
+#     # 나중에 DB에서 사용자 이름으로 user_id를 조회하는 로직으로 변경 필요
+#     return 1
+
+@app.get("/health", status_code=status.HTTP_200_OK)
+def health_check() -> Dict[str, Any]:
+    """
+    GET 요청에 대해 200 OK와 함께 상태를 반환합니다.
+    """
+    kst = timezone(timedelta(hours=9))
+    current_time = datetime.now(kst)
+    return {
+        "status": "ok",
+        "timestamp": current_time.strftime("%Y년 %m월 %d일 %H시 %M분 %S초")
+    }
+
+@app.head("/health", status_code=status.HTTP_200_OK)
+def head_health_check():
+    """
+    HEAD 요청에 대해 200 OK를 반환합니다. (Docker healthcheck용)
+    FastAPI는 HEAD 요청에 대해 자동으로 body 없는 응답을 처리합니다.
+    """
+    return Response() # 빈 응답을 보내면 FastAPI가 알아서 처리해줍니다.
+
+
+@app.get("/get_mcc_code", operation_id="get_mcc_code")
+def get_mcc_code(merchant_name: str) -> Dict[str, Any]:
+    """
+    주어진 가맹점 이름으로 DB에서 MCC 코드를 조회합니다.
+    
+    카드 혜택 계산을 위해 필요한 가맹점 분류 코드를 반환합니다.
+    예: "GS25" → 5411 (편의점), "스타벅스" → 5814 (카페)
+    """
+    print(f"🔍 get_mcc_code() 호출됨 - 가맹점: {merchant_name}")
+    try:
+        mcc_code = get_mcc_code_by_merchant(merchant_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB query error: {str(e)}")
+
+    if mcc_code is None:
+        raise HTTPException(status_code=404, detail=f"MCC code not found for merchant: {merchant_name}")
+
+    return {
+        "merchant_name": merchant_name,
+        "mcc_code": int(mcc_code)
+    }
+
+@app.get("/weather", operation_id="get_weather")
+def get_weather(city: str) -> Dict[str, Any]:
+    """
+    OpenWeather API를 사용하여 특정 도시의 현재 날씨 정보를 반환합니다.
+    사용자의 지역 정보가 없으면 get_location 도구를 먼저 사용하여 위치를 확인하세요.
+    
+    Args:
+        city (str): 날씨 정보를 가져올 도시명
+    
+    Returns:
+        Dict[str, Any]: 날씨 정보 (온도, 습도, 날씨 상태 등)
+    """
+    if not OPENWEATHER_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenWeather API 키가 설정되지 않았습니다.")
+    
+    try:
+        # OpenWeather API 호출
+        params = {
+            "q": city,
+            "appid": OPENWEATHER_API_KEY,
+            "units": "metric",  # 섭씨 온도
+            "lang": "kr"  # 한국어 설명
+        }
+        
+        response = requests.get(OPENWEATHER_BASE_URL, params=params)
+        response.raise_for_status()  # HTTP 에러 발생시 예외 발생
+        
+        weather_data = response.json()
+        
+        # 한국시간으로 변환
+        kst = timezone(timedelta(hours=9))
+        current_time = datetime.now(kst)
+        
+        # JSON 딕셔너리로 응답 생성
+        weather_info = {
+            "city": weather_data["name"],
+            "country": weather_data["sys"]["country"],
+            "temperature": weather_data["main"]["temp"],
+            "feels_like": weather_data["main"]["feels_like"],
+            "humidity": weather_data["main"]["humidity"],
+            "pressure": weather_data["main"]["pressure"],
+            "weather_main": weather_data["weather"][0]["main"],
+            "weather_description": weather_data["weather"][0]["description"],
+            "wind_speed": weather_data["wind"]["speed"],
+            "clouds": weather_data["clouds"]["all"],
+            "visibility": weather_data.get("visibility", 0) / 1000,  # km 단위로 변환
+            "sunrise": datetime.fromtimestamp(weather_data["sys"]["sunrise"], tz=kst).strftime("%H:%M"),
+            "sunset": datetime.fromtimestamp(weather_data["sys"]["sunset"], tz=kst).strftime("%H:%M"),
+            "timezone": weather_data["timezone"],
+            "current_time_kst": current_time.strftime("%Y년 %m월 %d일 %H시 %M분"),
+            "data_timestamp": datetime.fromtimestamp(weather_data["dt"], tz=kst).strftime("%Y년 %m월 %d일 %H시 %M분")
+        }
+        
+        print(f"🌤️ 날씨 정보 조회 완료 - 도시: {city}")
+        return weather_info
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ OpenWeather API 요청 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"날씨 서비스에 연결할 수 없습니다: {str(e)}")
+    except KeyError as e:
+        print(f"❌ 날씨 데이터 파싱 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"날씨 데이터를 처리하는 중 오류가 발생했습니다: {str(e)}")
+    except Exception as e:
+        print(f"❌ 예상치 못한 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"날씨 정보를 가져오는 중 오류가 발생했습니다: {str(e)}")
+
+@app.get("/get_location", operation_id="get_location")
+def get_location():
+    """
+    현재 사용자의 위치 정보를 반환합니다.
+    """
+    print("🔍 get_location() 호출됨")
+    return {"location": "Busan, South Korea"}
+
+# @app.get("/get_benefits_by_mcc", operation_id="get_benefits_by_mcc")
+# def get_benefits_by_mcc(user_id : int, mcc : int):
+#     """
+#     주어진 user_id와 mcc 코드를 사용하여 관련된 혜택 정보를 DB에서 조회하고 반환합니다.
+#     사용자가 가진 카드와 결제 상황에 매칭되는 모든 혜택을 조회합니다.
+#     """
+#     try:
+#         benefits_df = get_benefits_by_user_assets_and_mcc(user_id, mcc)
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"DB query error: {str(e)}")
+
+#     if benefits_df.empty:
+#         raise HTTPException(status_code=404, detail=f"No benefits found for user_id: {user_id} and mcc: {mcc}")
+
+#     return benefits_df.to_dict(orient="records")
+
+# @app.get("/get_user_benefit_limit", operation_id="get_user_benefit_limit")
+# def get_user_benefit_limit(user_id: int):
+#     """
+#     해당 user가 이번 기간에 적용받은 모든 혜택의 금액을 조회해서 반환합니다.
+#     """
+#     try:
+#         user_benefits_df = get_user_benefit_limit_in_benefit_sum(user_id)
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"DB query error: {str(e)}")
+#     if user_benefits_df.empty:
+#         raise HTTPException(status_code=404, detail=f"No benefit limits found for user_id: {user_id}")
+    
+#     return user_benefits_df.to_dict(orient="records")
+
+
+mcp = FastApiMCP(
+    app,
+    name="Card Benefit Recommendation MCP Server",
+    description="가맹점과 결제 금액에 따른 최적의 카드 추천 서비스 MCP 서버"
+  
+)
+
+# /mcp 경로에 MCP 서버를 마운트합니다.
+mcp.mount_http(mount_path="/mcp") 
+if __name__ == "__main__":
+    # import uvicorn
+    # uvicorn.run(app, host="0.0.0.0", port=8001)
+    get_sale("bangbang", "GS25", 128000)

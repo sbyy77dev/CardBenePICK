@@ -1,0 +1,212 @@
+/* 1. 프리텐다드 폰트 불러오기 (가장 상단에 위치) */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Card Benefit App Design System */
+/* Modern mobile-first design with card-focused color palette */
+
+@layer base {
+  :root {
+    /* --- 1. 앱 내부 배경 (기본값) -> 완전 흰색으로 변경 --- */
+    --background: 0 0% 100%; /* #FFFFFF */
+    --foreground: 0 0% 11%; /* #1E1E1E */
+
+    --card: 0 0% 100%; /* #FFFFFF */
+    --card-foreground: 0 0% 11%; /* #1E1E1E */
+
+    --popover: 0 0% 100%; /* #FFFFFF */
+    --popover-foreground: 0 0% 11%; /* #1E1E1E */
+
+    --primary: 220 91% 57%; /* #2E7CF6 (메인 블루) */
+    --primary-foreground: 0 0% 100%; /* 흰색 텍스트 */
+
+    --secondary: 220 100% 95%; /* #E6F0FF (연한 블루) */
+    --secondary-foreground: 220 91% 57%; /* 메인 블루 텍스트 */
+
+    --muted: 210 20% 96%; /* #F0F2F5 (기존 muted보다 밝게) */
+    --muted-foreground: 0 0% 42%; /* #6B6B6B (보조 텍스트) */
+
+    --accent: 220 100% 95%; /* #E6F0FF (연한 블루) - hover 등 */
+    --accent-foreground: 220 91% 57%; /* 메인 블루 텍스트 */
+
+    --destructive: 0 100% 67%; /* #FF5C5C (포인트 빨강) */
+    --destructive-foreground: 0 0% 100%; /* 흰색 텍스트 */
+
+    --border: 220 20% 92%; /* #E0E6EB (배경보다 살짝 어둡게) */
+    --input: 220 20% 92%; /* #E0E6EB */
+    --ring: 220 91% 57%; /* #2E7CF6 (메인 블루) */
+
+    --radius: 0.5rem; /* 기존 1rem -> 0.5rem (8px)로 조정 */
+
+    /* App-specific colors (포인트 컬러) */
+    --success: 158 70% 45%; /* #22C58B (포인트 초록) */
+    --warning: 42 100% 65%; /* #FFD34F (포인트 노랑) */
+    --info: 259 90% 65%; /* #8B5CF6 (포인트 보라) */
+    
+    /* 그림자 */
+    --shadow-card: 0 4px 10px rgba(0, 0, 0, 0.05);
+    --shadow-elevated: 0 8px 20px rgba(0, 0, 0, 0.07);
+
+    /* 기존 사이드바 변수는 유지 */
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  /* 다크 모드 설정 (유지) */
+  .dark {
+    --background: 222 47% 11%; /* #111827 (어두운 남색) */
+    --foreground: 210 40% 98%; /* #F9FAFB (밝은 회색) */
+
+    --card: 222 47% 15%; /* #1E293B */
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 15%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 220 91% 65%; /* #5599FF (밝은 메인 블루) */
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 222 47% 20%; /* #29374D (어두운 연한 블루) */
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 47% 20%;
+    --muted-foreground: 215 28% 65%; /* #8A9CB1 (어두운 보조 텍스트) */
+
+    --accent: 222 47% 20%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 100% 75%; /* #FF8080 (밝은 빨강) */
+    --destructive-foreground: 222 47% 11%;
+
+    --border: 222 47% 25%; /* #334155 */
+    --input: 222 47% 25%;
+    --ring: 220 91% 65%;
+
+    /* App-specific dark colors */
+    --success: 158 70% 55%; /* #3EE0A1 (밝은 초록) */
+    --warning: 42 100% 70%; /* #FFDD73 (밝은 노랑) */
+    --info: 259 90% 70%; /* #A67FFF (밝은 보라) */
+    
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    /* --- 2. 진짜 배경 (그림자 뒤) -> 회색으로 설정 --- */
+    /* bg-slate-100은 연한 회색입니다. */
+    @apply bg-slate-100 text-foreground font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+@layer components {
+  /* --- 3. 앱 컨테이너 (스마트폰 모양) -> 흰색 설정 --- */
+  .app-container {
+    /* bg-white를 적용하여 앱 내부는 항상 깨끗한 흰색 유지 */
+    @apply max-w-md mx-auto min-h-screen bg-white shadow-2xl;
+  }
+
+  .card-gradient {
+    /* 그라디언트 업데이트 */
+    @apply bg-gradient-to-r from-primary to-blue-400; /* 새 메인 블루 기반 */
+  }
+
+  .success-gradient {
+    background: linear-gradient(135deg, hsl(var(--success)), hsl(158 70% 55%));
+  }
+
+  /* 새 그림자 적용 */
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+
+  .shadow-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+
+  /* Chat bubble styles */
+  .chat-bubble-user {
+    @apply bg-primary text-primary-foreground rounded-2xl rounded-br-md px-4 py-2 ml-auto max-w-[80%];
+  }
+
+  .chat-bubble-bot {
+    @apply bg-card text-card-foreground rounded-2xl rounded-bl-md px-4 py-2 mr-auto max-w-[80%] shadow-card;
+  }
+
+  /* Button variants */
+  .btn-gradient {
+    /* 그라디언트 업데이트 */
+    @apply bg-gradient-to-r from-primary to-blue-400 text-primary-foreground hover:from-primary/90 hover:to-blue-400/90 transition-all duration-200;
+  }
+
+  .btn-success {
+    /* 새 success 변수 사용 */
+    @apply bg-success text-white hover:bg-success/90;
+  }
+  
+  /* --- 3D 카드를 위한 유틸리티 클래스 추가 --- */
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+  
+  /* 로딩 점 스타일 */
+  .loading-dot {
+    @apply w-2 h-2 bg-gray-400 rounded-full; /* Tailwind 유틸리티 사용 (크기, 색상, 둥글기) */
+    animation: bounce-dot 1.4s infinite ease-in-out both;
+  }
+
+  /* 점들의 순차적 애니메이션 딜레이 */
+  .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+  .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+}
+
+/* 애니메이션 키프레임 (전역 설정) */
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: scale(0); } 
+  40% { transform: scale(1); }
+}

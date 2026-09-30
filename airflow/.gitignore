@@ -1,0 +1,22 @@
+.env
+*.pem
+*.csv 
+.*
+!.gitignore
+!.dockerignore
+__pycache__
+main_back_up.py
+db.py
+
+# 연습 폴더
+**/prac*
+
+logs
+
+# 인증 파일
+**/credentials.json
+**/token.json
+
+config/
+
+**/crawling_data

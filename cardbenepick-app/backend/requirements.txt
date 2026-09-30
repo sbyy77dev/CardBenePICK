@@ -1,0 +1,16 @@
+﻿# --- FastAPI ---
+fastapi[all]               # FastAPI 프레임워크 (uvicorn, pydantic 등 포함)
+
+# --- DB (MySQL + SQLModel) ---
+sqlmodel                   # 저희가 사용하기로 한 ORM
+pymysql                    # MySQL 드라이버 (또는 mysqlclient)
+
+
+# --- 인증 (Auth) ---
+python-jose[cryptography]  # JWT 토큰 생성 및 검증
+passlib[bcrypt]            # (선택) 비밀번호 해싱 (지금은 OTP지만 향후 필요)
+
+# --- 설정 ---
+python-dotenv              # .env 파일 관리를 위함
+# --- api ---
+httpx
